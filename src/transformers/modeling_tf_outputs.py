@@ -44,6 +44,7 @@ class TFBaseModelOutput(ModelOutput):
     last_hidden_state: tf.Tensor = None
     hidden_states: Optional[Tuple[tf.Tensor]] = None
     attentions: Optional[Tuple[tf.Tensor]] = None
+    norms: Optional[Tuple[tf.Tensor]] = None #added by Alex Xenos
 
 
 @dataclass
@@ -78,6 +79,7 @@ class TFBaseModelOutputWithPooling(ModelOutput):
     pooler_output: tf.Tensor = None
     hidden_states: Optional[Tuple[tf.Tensor]] = None
     attentions: Optional[Tuple[tf.Tensor]] = None
+    norms: Optional[Tuple[tf.Tensor]] = None #added by Alex Xenos
 
 
 @dataclass
