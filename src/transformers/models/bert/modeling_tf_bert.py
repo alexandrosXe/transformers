@@ -340,6 +340,8 @@ class BertNormOutput(tf.keras.layers.Layer): # This class is added by Goro Kobay
         print(dense)
         print("PRINTINGGGGG DENSE(0)")
         print(dense[0])
+        print("PRINTINGGGGG DENSE(1)")
+        print(dense[1])
         #print("SHAAAAAAAPE TENSOOOR", dense.shape)
         print("IS TENSSSOOOR", tf.is_tensor(dense))
         dense = tf.convert_to_tensor(dense[0], dtype=tf.float32)
@@ -348,7 +350,7 @@ class BertNormOutput(tf.keras.layers.Layer): # This class is added by Goro Kobay
         dense = tf.stop_gradient(tf.transpose(dense, perm=[1, 2, 0]))
 
         # Make transformed vectors f(x) from Value vectors (value_layer) and weight matrix (dense).
-        transformed_layer = tf.stop_gradient(value_layer.matmul(dense, training=False))
+        transformed_layer = tf.stop_gradient(tf.matmul(value_layer,dense))
         #transformed_shape = transformed_layer.size()
 
         # reshape to (batch, seq_length, num_heads, 1, all_head_size)
