@@ -349,7 +349,7 @@ class BertNormOutput(tf.keras.layers.Layer): # This class is added by Goro Kobay
         transformed_layer = tf.stop_gradient(tf.reshape(tensor=transformed_layer, shape=(batch_size,-1,self.num_attention_heads, self.all_head_size)))
         transformed_layer = tf.stop_gradient(tf.transpose(transformed_layer, perm=[0, 2, 1, 3]))
         #transformed_shape = transformed_layer.size() #(batch, num_heads, seq_length, all_head_size)
-        transformed_norm = tf.stop_gradient(tf.norm(transformed_layer, axis=-1, training=False))
+        transformed_norm = tf.stop_gradient(tf.norm(transformed_layer, axis=-1))
 
         # Make weighted vectors αf(x) from transformed vectors (transformed_layer) and attention weights (attention_probs).
         weighted_layer = tf.stop_gradient(tf.einsum('bhks,bhsd->bhksd', attention_probs, transformed_layer)) #(batch, num_heads, seq_length, seq_length, all_head_size)
