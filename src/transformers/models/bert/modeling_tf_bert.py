@@ -359,7 +359,7 @@ class BertNormOutput(tf.keras.layers.Layer): # This class is added by Goro Kobay
         summed_weighted_layer = tf.stop_gradient(weighted_layer.sum(dim=1))
 
         # Calculate L2 norm of summed weighted vectors: (batch, seq_length, seq_length)
-        summed_weighted_norm = tf.stop_gradient(tf.norm(summed_weighted_layer, axis=-1, training=False))
+        summed_weighted_norm = tf.stop_gradient(tf.norm(summed_weighted_layer, axis=-1))
 
         del transformed_shape
             
