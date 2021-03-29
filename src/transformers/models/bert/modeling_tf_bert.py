@@ -336,6 +336,8 @@ class BertNormOutput(tf.keras.layers.Layer): # This class is added by Goro Kobay
        
 
         dense = dense.weights
+        dense = np.array(dense)
+        print("SHAAAAAAAPE TENSOOOR", dense.shape)
         print("IS TENSSSOOOR", tf.is_tensor(dense))
         dense = tf.convert_to_tensor(dense, dtype=tf.float32)
         print("SHAAAAAAAPE TENSOOOR", tf.shape(dense))
