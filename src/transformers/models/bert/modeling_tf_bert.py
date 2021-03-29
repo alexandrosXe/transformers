@@ -335,17 +335,9 @@ class BertNormOutput(tf.keras.layers.Layer): # This class is added by Goro Kobay
         print(self.all_head_size, self.num_attention_heads, self.attention_head_size)
        
 
-        dense = dense.weights
-        print("LEEEEEEN", len(dense))
-        print(dense)
-        print("PRINTINGGGGG DENSE(0)")
-        print(dense[0].shape)
-        print("PRINTINGGGGG DENSE(1)")
-        print(dense[1].shape)
-        #print("SHAAAAAAAPE TENSOOOR", dense.shape)
-        print("IS TENSSSOOOR", tf.is_tensor(dense))
-        dense = tf.convert_to_tensor(dense[0], dtype=tf.float32)
-        print("SHAAAAAAAPE TENSOOOR", tf.shape(dense))
+        dense = dense.weights[0] #changed by Alex Xenos
+#         dense = tf.convert_to_tensor(dense[0], dtype=tf.float32)
+#         print("SHAAAAAAAPE TENSOOOR", tf.shape(dense))
         dense = tf.stop_gradient(tf.reshape(tensor=dense, shape=(self.all_head_size, self.num_attention_heads, self.attention_head_size)))
         dense = tf.stop_gradient(tf.transpose(dense, perm=[1, 2, 0]))
 
@@ -355,6 +347,7 @@ class BertNormOutput(tf.keras.layers.Layer): # This class is added by Goro Kobay
 
         # reshape to (batch, seq_length, num_heads, 1, all_head_size)
         transformed_layer = tf.stop_gradient(tf.reshape(tensor=transformed_layer, shape=(batch_size,-1,self.num_attention_heads,1, self.all_head_size)))
+        transformed_layer = tf.squeeze(transformed_layer, axis=None, name=None) #added by Alex Xenos
         transformed_layer = tf.stop_gradient(tf.transpose(transformed_layer, perm=[0, 2, 1, 3]))
         #transformed_shape = transformed_layer.size() #(batch, num_heads, seq_length, all_head_size)
         transformed_norm = tf.stop_gradient(tf.norm(transformed_layer, axis=-1, training=False))
