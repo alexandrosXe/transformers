@@ -360,8 +360,6 @@ class BertNormOutput(tf.keras.layers.Layer): # This class is added by Goro Kobay
 
         # Calculate L2 norm of summed weighted vectors: (batch, seq_length, seq_length)
         summed_weighted_norm = tf.stop_gradient(tf.norm(summed_weighted_layer, axis=-1))
-
-        del transformed_shape
             
         # outputs: ||f(x)||, ||αf(x)||, ||Σαf(x)||
         outputs = (transformed_norm,
