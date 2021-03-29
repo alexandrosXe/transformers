@@ -327,17 +327,10 @@ class BertNormOutput(tf.keras.layers.Layer): # This class is added by Goro Kobay
         # value_layer is converted to (batch, seq_length, num_heads, 1, head_size)
         batch_size = shape_list(hidden_states)[0]
         value_layer =  tf.stop_gradient(tf.transpose(value_layer, perm=[0, 2, 1, 3]))
-        #value_shape = value_layer.size()
         value_layer = tf.stop_gradient(tf.reshape(tensor=value_layer, shape=(batch_size, -1, self.num_attention_heads,1, self.attention_head_size)))
 
         # dense weight is converted to (num_heads, head_size, all_head_size)
-        
-        print(self.all_head_size, self.num_attention_heads, self.attention_head_size)
-       
-
         dense = dense.weights[0] #changed by Alex Xenos
-#         dense = tf.convert_to_tensor(dense[0], dtype=tf.float32)
-#         print("SHAAAAAAAPE TENSOOOR", tf.shape(dense))
         dense = tf.stop_gradient(tf.reshape(tensor=dense, shape=(self.all_head_size, self.num_attention_heads, self.attention_head_size)))
         dense = tf.stop_gradient(tf.transpose(dense, perm=[1, 2, 0]))
 
