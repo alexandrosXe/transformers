@@ -356,7 +356,7 @@ class BertNormOutput(tf.keras.layers.Layer): # This class is added by Goro Kobay
         weighted_norm = tf.stop_gradient(tf.norm(weighted_layer, axis=-1))
 
         # Sum each αf(x) over all heads: (batch, seq_length, seq_length, all_head_size)
-        summed_weighted_layer = tf.stop_gradient(weighted_layer.sum(dim=1))
+        summed_weighted_layer = tf.stop_gradient(tf.math.reduce_sum(weighted_layer, axis=1))
 
         # Calculate L2 norm of summed weighted vectors: (batch, seq_length, seq_length)
         summed_weighted_norm = tf.stop_gradient(tf.norm(summed_weighted_layer, axis=-1))
