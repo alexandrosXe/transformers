@@ -245,6 +245,7 @@ class TFBertSelfAttention(tf.keras.layers.Layer):
         head_mask: tf.Tensor,
         output_attentions: bool,
         training: bool = False,
+        output_norms=False,  # added by Goro Kobayashi
     ) -> Tuple[tf.Tensor]:
         batch_size = shape_list(hidden_states)[0]
         mixed_query_layer = self.query(inputs=hidden_states)
@@ -280,8 +281,14 @@ class TFBertSelfAttention(tf.keras.layers.Layer):
 
         # (batch_size, seq_len_q, all_head_size)
         attention_output = tf.reshape(tensor=attention_output, shape=(batch_size, -1, self.all_head_size))
-        outputs = (attention_output, attention_probs) if output_attentions else (attention_output,)
 
+         # added below by Goro Kobayashi
+        #-------------------------------
+        if output_norms:
+            outputs = (attention_output, attention_probs, value_layer)
+            return outputs
+        #-------------------------------
+        outputs = (attention_output, attention_probs) if output_attentions else (attention_output,)
         return outputs
 
 
@@ -302,6 +309,66 @@ class TFBertSelfOutput(tf.keras.layers.Layer):
 
         return hidden_states
 
+class BertNormOutput(tf.keras.layers.Layer): # This class is added by Goro Kobayashi
+    def __init__(self, config: BertConfig, **kwargs):
+        super().__init__(**kwargs) #added by Alex Xenos
+        self.num_attention_heads = config.num_attention_heads
+        self.attention_head_size = int(config.hidden_size / config.num_attention_heads)
+        self.all_head_size = self.num_attention_heads * self.attention_head_size
+
+    def call(self, hidden_states, attention_probs, value_layer, dense, trainable=False)  -> Tuple[tf.Tensor]:
+        # hidden_states: (batch, seq_length, all_head_size)
+        # attention_probs: (batch, num_heads, seq_length, seq_length)
+        # value_layer: (batch, num_heads, seq_length, head_size)
+        # dense: nn.Linear(all_head_size, all_head_size)
+
+        #with torch.no_grad():
+
+        # value_layer is converted to (batch, seq_length, num_heads, 1, head_size)
+        batch_size = shape_list(hidden_states)[0]
+        value_layer =  tf.stop_gradient(tf.transpose(value_layer, perm=[0, 2, 1, 3]))
+        #value_shape = value_layer.size()
+        value_layer = tf.stop_gradient(tf.reshape(tensor=value_layer, shape=(batch_size, -1, self.num_attention_heads,1, self.attention_head_size)))
+
+        # dense weight is converted to (num_heads, head_size, all_head_size)
+        print(dense.get_weights())
+        print("----------------YOOOOOOOOOO---------------")
+        print(dense.weights)
+        dense = dense.weights
+        dense = tf.stop_gradient(tf.reshape(tensor=dense, shape=(self.all_head_size, self.num_attention_heads, self.attention_head_size)))
+        dense = tf.stop_gradient(tf.transpose(dense, perm=[1, 2, 0]))
+
+        # Make transformed vectors f(x) from Value vectors (value_layer) and weight matrix (dense).
+        transformed_layer = tf.stop_gradient(value_layer.matmul(dense, training=False))
+        #transformed_shape = transformed_layer.size()
+
+        # reshape to (batch, seq_length, num_heads, 1, all_head_size)
+        transformed_layer = tf.stop_gradient(tf.reshape(tensor=transformed_layer, shape=(batch_size,-1,self.num_attention_heads,1, self.all_head_size)))
+        transformed_layer = tf.stop_gradient(tf.transpose(transformed_layer, perm=[0, 2, 1, 3]))
+        #transformed_shape = transformed_layer.size() #(batch, num_heads, seq_length, all_head_size)
+        transformed_norm = tf.stop_gradient(tf.norm(transformed_layer, axis=-1, training=False))
+
+        # Make weighted vectors αf(x) from transformed vectors (transformed_layer) and attention weights (attention_probs).
+        weighted_layer = tf.stop_gradient(tf.einsum('bhks,bhsd->bhksd', attention_probs, transformed_layer)) #(batch, num_heads, seq_length, seq_length, all_head_size)
+        weighted_norm = tf.stop_gradient(tf.norm(weighted_layer, axis=-1))
+
+        # Sum each αf(x) over all heads: (batch, seq_length, seq_length, all_head_size)
+        summed_weighted_layer = tf.stop_gradient(weighted_layer.sum(dim=1))
+
+        # Calculate L2 norm of summed weighted vectors: (batch, seq_length, seq_length)
+        summed_weighted_norm = tf.stop_gradient(tf.norm(summed_weighted_layer, axis=-1, training=False))
+
+        del transformed_shape
+            
+        # outputs: ||f(x)||, ||αf(x)||, ||Σαf(x)||
+        outputs = (transformed_norm,
+                    weighted_norm,
+                    summed_weighted_norm,
+                  )
+        del transformed_layer, weighted_layer, summed_weighted_layer
+        #torch.cuda.empty_cache() maybe realase gpu 
+        return outputs
+
 
 class TFBertAttention(tf.keras.layers.Layer):
     def __init__(self, config: BertConfig, **kwargs):
@@ -309,6 +376,7 @@ class TFBertAttention(tf.keras.layers.Layer):
 
         self.self_attention = TFBertSelfAttention(config, name="self")
         self.dense_output = TFBertSelfOutput(config, name="output")
+        self.norm = BertNormOutput(config)  # added by Goro Kobayashi
 
     def prune_heads(self, heads):
         raise NotImplementedError
@@ -320,6 +388,7 @@ class TFBertAttention(tf.keras.layers.Layer):
         head_mask: tf.Tensor,
         output_attentions: bool,
         training: bool = False,
+        output_norms=False, # added by Goro Kobayashi
     ) -> Tuple[tf.Tensor]:
         self_outputs = self.self_attention(
             hidden_states=input_tensor,
@@ -327,10 +396,20 @@ class TFBertAttention(tf.keras.layers.Layer):
             head_mask=head_mask,
             output_attentions=output_attentions,
             training=training,
-        )
+            output_norms=output_norms, 
+        ) # changed by Goro Kobayashi
         attention_output = self.dense_output(
             hidden_states=self_outputs[0], input_tensor=input_tensor, training=training
         )
+
+        # changed below by Goro Kobayashi
+        #-------------------------------
+        if output_norms:             #hidden_states
+            norms_outputs = self.norm(self_outputs[0] , self_outputs[1], self_outputs[2], self.dense_output.dense)
+            outputs = (attention_output, self_outputs[1],) + norms_outputs # add attentions and norms if we output them
+            return outputs
+        #-------------------------------
+
         outputs = (attention_output,) + self_outputs[1:]  # add attentions if we output them
 
         return outputs
@@ -389,6 +468,7 @@ class TFBertLayer(tf.keras.layers.Layer):
         head_mask: tf.Tensor,
         output_attentions: bool,
         training: bool = False,
+        output_norms=False, # added by Goro Kobayashi
     ) -> Tuple[tf.Tensor]:
         attention_outputs = self.attention(
             input_tensor=hidden_states,
@@ -396,7 +476,8 @@ class TFBertLayer(tf.keras.layers.Layer):
             head_mask=head_mask,
             output_attentions=output_attentions,
             training=training,
-        )
+            output_norms=output_norms,
+        ) # changed by Goro Kobayashi
         attention_output = attention_outputs[0]
         intermediate_output = self.intermediate(hidden_states=attention_output)
         layer_output = self.bert_output(
@@ -422,9 +503,11 @@ class TFBertEncoder(tf.keras.layers.Layer):
         output_hidden_states: bool,
         return_dict: bool,
         training: bool = False,
+        output_norms=False, # added by Goro Kobayashi
     ) -> Union[TFBaseModelOutput, Tuple[tf.Tensor]]:
         all_hidden_states = () if output_hidden_states else None
         all_attentions = () if output_attentions else None
+        all_norms = ()  # added by Goro Kobayashi
 
         for i, layer_module in enumerate(self.layer):
             if output_hidden_states:
@@ -436,22 +519,41 @@ class TFBertEncoder(tf.keras.layers.Layer):
                 head_mask=head_mask[i],
                 output_attentions=output_attentions,
                 training=training,
+                output_norms=output_norms,  # added by Goro Kobayashi
             )
             hidden_states = layer_outputs[0]
 
             if output_attentions:
                 all_attentions = all_attentions + (layer_outputs[1],)
 
+            # added by Goro Kobayashi
+            if output_norms:
+              all_norms = all_norms + (layer_outputs[2:],)
+
         # Add last layer
         if output_hidden_states:
             all_hidden_states = all_hidden_states + (hidden_states,)
 
         if not return_dict:
-            return tuple(v for v in [hidden_states, all_hidden_states, all_attentions] if v is not None)
-
-        return TFBaseModelOutput(
-            last_hidden_state=hidden_states, hidden_states=all_hidden_states, attentions=all_attentions
+            # changed below by Goro Kobayashi
+            #--------------------
+            if output_norms:
+              return tuple(v for v in [hidden_states, all_hidden_states, all_attentions, all_norms] if v is not None)
+            else:
+              return tuple(v for v in [hidden_states, all_hidden_states, all_attentions] if v is not None)
+            #--------------------
+        # changed below by Goro Kobayashi
+        #--------------------
+        if output_norms:
+          return TFBaseModelOutput(
+            last_hidden_state=hidden_states, hidden_states=all_hidden_states, attentions=all_attentions, norms=all_norms
         )
+        else:  
+          return TFBaseModelOutput(
+            last_hidden_state=hidden_states, hidden_states=all_hidden_states, attentions=all_attentions
+          ) 
+          #--------------------
+
 
 
 class TFBertPooler(tf.keras.layers.Layer):
@@ -608,6 +710,7 @@ class TFBertMainLayer(tf.keras.layers.Layer):
         output_attentions: Optional[bool] = None,
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
+        output_norms: Optional[bool] = None, #added by Alex Xenos
         training: bool = False,
         **kwargs,
     ) -> Union[TFBaseModelOutputWithPooling, Tuple[tf.Tensor]]:
@@ -624,6 +727,7 @@ class TFBertMainLayer(tf.keras.layers.Layer):
             output_hidden_states=output_hidden_states,
             return_dict=return_dict,
             training=training,
+            output_norms=output_norms, #added by Alex Xenos
             kwargs_call=kwargs,
         )
 
@@ -685,6 +789,7 @@ class TFBertMainLayer(tf.keras.layers.Layer):
             output_hidden_states=inputs["output_hidden_states"],
             return_dict=inputs["return_dict"],
             training=inputs["training"],
+            output_norms=inputs["output_norms"],
         )
 
         sequence_output = encoder_outputs[0]
@@ -701,6 +806,7 @@ class TFBertMainLayer(tf.keras.layers.Layer):
             pooler_output=pooled_output,
             hidden_states=encoder_outputs.hidden_states,
             attentions=encoder_outputs.attentions,
+            norms = encoder_outputs.norms,
         )
 
 
@@ -743,6 +849,7 @@ class TFBertForPreTrainingOutput(ModelOutput):
     seq_relationship_logits: tf.Tensor = None
     hidden_states: Optional[Union[Tuple[tf.Tensor], tf.Tensor]] = None
     attentions: Optional[Union[Tuple[tf.Tensor], tf.Tensor]] = None
+    norms: Optional[Union[Tuple[tf.Tensor], tf.Tensor]] = None #added by Alex Xenos
 
 
 BERT_START_DOCSTRING = r"""
@@ -867,6 +974,7 @@ class TFBertModel(TFBertPreTrainedModel):
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
         training: Optional[bool] = False,
+        output_norms=None, #added by Goro Kobayashi
         **kwargs,
     ) -> Union[TFBaseModelOutputWithPooling, Tuple[tf.Tensor]]:
         inputs = input_processing(
@@ -880,6 +988,7 @@ class TFBertModel(TFBertPreTrainedModel):
             inputs_embeds=inputs_embeds,
             output_attentions=output_attentions,
             output_hidden_states=output_hidden_states,
+            output_norms = output_norms, #added by Alex Xenos
             return_dict=return_dict,
             training=training,
             kwargs_call=kwargs,
@@ -895,6 +1004,7 @@ class TFBertModel(TFBertPreTrainedModel):
             output_hidden_states=inputs["output_hidden_states"],
             return_dict=inputs["return_dict"],
             training=inputs["training"],
+            output_norms=inputs["output_norms"]
         )
 
         return outputs
@@ -902,12 +1012,14 @@ class TFBertModel(TFBertPreTrainedModel):
     def serving_output(self, output: TFBaseModelOutputWithPooling) -> TFBaseModelOutputWithPooling:
         hs = tf.convert_to_tensor(output.hidden_states) if self.config.output_hidden_states else None
         attns = tf.convert_to_tensor(output.attentions) if self.config.output_attentions else None
+        nrms = tf.convert_to_tensor(output.norms) if self.config.output_norms else None #added by Alex Xenos
 
         return TFBaseModelOutputWithPooling(
             last_hidden_state=output.last_hidden_state,
             pooler_output=output.pooler_output,
             hidden_states=hs,
             attentions=attns,
+            norms=nrms,  # added by Alex Xenos
         )
 
 
@@ -1413,6 +1525,7 @@ class TFBertForSequenceClassification(TFBertPreTrainedModel, TFSequenceClassific
         return_dict: Optional[bool] = None,
         labels: Optional[Union[np.ndarray, tf.Tensor]] = None,
         training: Optional[bool] = False,
+        output_norms=None, #added by Goro Kobayashi
         **kwargs,
     ) -> Union[TFSequenceClassifierOutput, Tuple[tf.Tensor]]:
         r"""
@@ -1448,6 +1561,7 @@ class TFBertForSequenceClassification(TFBertPreTrainedModel, TFSequenceClassific
             output_hidden_states=inputs["output_hidden_states"],
             return_dict=inputs["return_dict"],
             training=inputs["training"],
+            output_norms=output_norms, #added by Goro Kobayashi
         )
         pooled_output = outputs[1]
         pooled_output = self.dropout(inputs=pooled_output, training=inputs["training"])
