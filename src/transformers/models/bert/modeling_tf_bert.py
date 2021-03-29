@@ -331,9 +331,9 @@ class BertNormOutput(tf.keras.layers.Layer): # This class is added by Goro Kobay
         value_layer = tf.stop_gradient(tf.reshape(tensor=value_layer, shape=(batch_size, -1, self.num_attention_heads,1, self.attention_head_size)))
 
         # dense weight is converted to (num_heads, head_size, all_head_size)
-        print(dense.get_weights())
-        print("----------------YOOOOOOOOOO---------------")
-        print(dense.weights)
+        
+        print(self.all_head_size, self.num_attention_heads, self.attention_head_size)
+
         dense = dense.weights
         dense = tf.stop_gradient(tf.reshape(tensor=dense, shape=(self.all_head_size, self.num_attention_heads, self.attention_head_size)))
         dense = tf.stop_gradient(tf.transpose(dense, perm=[1, 2, 0]))
